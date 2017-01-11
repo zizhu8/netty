@@ -46,6 +46,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 
 import javax.net.ssl.KeyManager;
 import javax.net.ssl.SSLEngine;
@@ -106,6 +107,10 @@ public abstract class ReferenceCountedOpenSslContext extends SslContext implemen
     private final long sessionTimeout;
     private final OpenSslApplicationProtocolNegotiator apn;
     private final int mode;
+
+    private volatile int destroyed;
+    private static final AtomicIntegerFieldUpdater<ReferenceCountedOpenSslContext> DESTROYED_UPDATER =
+            AtomicIntegerFieldUpdater.newUpdater(ReferenceCountedOpenSslContext.class, "destroyed");
 
     // Reference Counting
     private final ResourceLeakTracker<ReferenceCountedOpenSslContext> leak;
@@ -256,91 +261,89 @@ public abstract class ReferenceCountedOpenSslContext extends SslContext implemen
         // Create a new SSL_CTX and configure it.
         boolean success = false;
         try {
-            synchronized (ReferenceCountedOpenSslContext.class) {
-                try {
-                    ctx = SSLContext.make(aprPool, SSL.SSL_PROTOCOL_ALL, mode);
-                } catch (Exception e) {
-                    throw new SSLException("failed to create an SSL_CTX", e);
-                }
+            try {
+                ctx = SSLContext.make(aprPool, SSL.SSL_PROTOCOL_ALL, mode);
+            } catch (Exception e) {
+                throw new SSLException("failed to create an SSL_CTX", e);
+            }
 
-                SSLContext.setOptions(ctx, SSL.SSL_OP_ALL);
-                SSLContext.setOptions(ctx, SSL.SSL_OP_NO_SSLv2);
-                SSLContext.setOptions(ctx, SSL.SSL_OP_NO_SSLv3);
-                SSLContext.setOptions(ctx, SSL.SSL_OP_CIPHER_SERVER_PREFERENCE);
-                SSLContext.setOptions(ctx, SSL.SSL_OP_SINGLE_ECDH_USE);
-                SSLContext.setOptions(ctx, SSL.SSL_OP_SINGLE_DH_USE);
-                SSLContext.setOptions(ctx, SSL.SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION);
+            SSLContext.setOptions(ctx, SSL.SSL_OP_ALL);
+            SSLContext.setOptions(ctx, SSL.SSL_OP_NO_SSLv2);
+            SSLContext.setOptions(ctx, SSL.SSL_OP_NO_SSLv3);
+            SSLContext.setOptions(ctx, SSL.SSL_OP_CIPHER_SERVER_PREFERENCE);
+            SSLContext.setOptions(ctx, SSL.SSL_OP_SINGLE_ECDH_USE);
+            SSLContext.setOptions(ctx, SSL.SSL_OP_SINGLE_DH_USE);
+            SSLContext.setOptions(ctx, SSL.SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION);
 
-                // We do not support compression as the moment so we should explicitly disable it.
-                SSLContext.setOptions(ctx, SSL.SSL_OP_NO_COMPRESSION);
+            // We do not support compression as the moment so we should explicitly disable it.
+            SSLContext.setOptions(ctx, SSL.SSL_OP_NO_COMPRESSION);
 
-                // Disable ticket support by default to be more inline with SSLEngineImpl of the JDK.
-                // This also let SSLSession.getId() work the same way for the JDK implementation and the OpenSSLEngine.
-                // If tickets are supported SSLSession.getId() will only return an ID on the server-side if it could
-                // make use of tickets.
-                SSLContext.setOptions(ctx, SSL.SSL_OP_NO_TICKET);
+            // Disable ticket support by default to be more inline with SSLEngineImpl of the JDK.
+            // This also let SSLSession.getId() work the same way for the JDK implementation and the OpenSSLEngine.
+            // If tickets are supported SSLSession.getId() will only return an ID on the server-side if it could
+            // make use of tickets.
+            SSLContext.setOptions(ctx, SSL.SSL_OP_NO_TICKET);
 
-                // We need to enable SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER as the memory address may change between
-                // calling OpenSSLEngine.wrap(...).
-                // See https://github.com/netty/netty-tcnative/issues/100
-                SSLContext.setMode(ctx, SSLContext.getMode(ctx) | SSL.SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+            // We need to enable SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER as the memory address may change between
+            // calling OpenSSLEngine.wrap(...).
+            // See https://github.com/netty/netty-tcnative/issues/100
+            SSLContext.setMode(ctx, SSLContext.getMode(ctx) | SSL.SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
 
-                if (DH_KEY_LENGTH != null) {
-                    SSLContext.setTmpDHLength(ctx, DH_KEY_LENGTH);
-                }
+            if (DH_KEY_LENGTH != null) {
+                SSLContext.setTmpDHLength(ctx, DH_KEY_LENGTH);
+            }
 
                 /* List the ciphers that are permitted to negotiate. */
-                try {
-                    SSLContext.setCipherSuite(ctx, CipherSuiteConverter.toOpenSsl(unmodifiableCiphers));
-                } catch (SSLException e) {
-                    throw e;
-                } catch (Exception e) {
-                    throw new SSLException("failed to set cipher suite: " + unmodifiableCiphers, e);
-                }
+            try {
+                SSLContext.setCipherSuite(ctx, CipherSuiteConverter.toOpenSsl(unmodifiableCiphers));
+            } catch (SSLException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new SSLException("failed to set cipher suite: " + unmodifiableCiphers, e);
+            }
 
-                List<String> nextProtoList = apn.protocols();
+            List<String> nextProtoList = apn.protocols();
                 /* Set next protocols for next protocol negotiation extension, if specified */
-                if (!nextProtoList.isEmpty()) {
-                    String[] protocols = nextProtoList.toArray(new String[nextProtoList.size()]);
-                    int selectorBehavior = opensslSelectorFailureBehavior(apn.selectorFailureBehavior());
+            if (!nextProtoList.isEmpty()) {
+                String[] protocols = nextProtoList.toArray(new String[nextProtoList.size()]);
+                int selectorBehavior = opensslSelectorFailureBehavior(apn.selectorFailureBehavior());
 
-                    switch (apn.protocol()) {
-                        case NPN:
-                            SSLContext.setNpnProtos(ctx, protocols, selectorBehavior);
-                            break;
-                        case ALPN:
-                            SSLContext.setAlpnProtos(ctx, protocols, selectorBehavior);
-                            break;
-                        case NPN_AND_ALPN:
-                            SSLContext.setNpnProtos(ctx, protocols, selectorBehavior);
-                            SSLContext.setAlpnProtos(ctx, protocols, selectorBehavior);
-                            break;
-                        default:
-                            throw new Error();
-                    }
+                switch (apn.protocol()) {
+                    case NPN:
+                        SSLContext.setNpnProtos(ctx, protocols, selectorBehavior);
+                        break;
+                    case ALPN:
+                        SSLContext.setAlpnProtos(ctx, protocols, selectorBehavior);
+                        break;
+                    case NPN_AND_ALPN:
+                        SSLContext.setNpnProtos(ctx, protocols, selectorBehavior);
+                        SSLContext.setAlpnProtos(ctx, protocols, selectorBehavior);
+                        break;
+                    default:
+                        throw new Error();
                 }
+            }
 
                 /* Set session cache size, if specified */
-                if (sessionCacheSize > 0) {
-                    this.sessionCacheSize = sessionCacheSize;
-                    SSLContext.setSessionCacheSize(ctx, sessionCacheSize);
-                } else {
-                    // Get the default session cache size using SSLContext.setSessionCacheSize()
-                    this.sessionCacheSize = sessionCacheSize = SSLContext.setSessionCacheSize(ctx, 20480);
-                    // Revert the session cache size to the default value.
-                    SSLContext.setSessionCacheSize(ctx, sessionCacheSize);
-                }
+            if (sessionCacheSize > 0) {
+                this.sessionCacheSize = sessionCacheSize;
+                SSLContext.setSessionCacheSize(ctx, sessionCacheSize);
+            } else {
+                // Get the default session cache size using SSLContext.setSessionCacheSize()
+                this.sessionCacheSize = sessionCacheSize = SSLContext.setSessionCacheSize(ctx, 20480);
+                // Revert the session cache size to the default value.
+                SSLContext.setSessionCacheSize(ctx, sessionCacheSize);
+            }
 
                 /* Set session timeout, if specified */
-                if (sessionTimeout > 0) {
-                    this.sessionTimeout = sessionTimeout;
-                    SSLContext.setSessionCacheTimeout(ctx, sessionTimeout);
-                } else {
-                    // Get the default session timeout using SSLContext.setSessionCacheTimeout()
-                    this.sessionTimeout = sessionTimeout = SSLContext.setSessionCacheTimeout(ctx, 300);
-                    // Revert the session timeout to the default value.
-                    SSLContext.setSessionCacheTimeout(ctx, sessionTimeout);
-                }
+            if (sessionTimeout > 0) {
+                this.sessionTimeout = sessionTimeout;
+                SSLContext.setSessionCacheTimeout(ctx, sessionTimeout);
+            } else {
+                // Get the default session timeout using SSLContext.setSessionCacheTimeout()
+                this.sessionTimeout = sessionTimeout = SSLContext.setSessionCacheTimeout(ctx, 300);
+                // Revert the session timeout to the default value.
+                SSLContext.setSessionCacheTimeout(ctx, sessionTimeout);
             }
             success = true;
         } finally {
@@ -461,7 +464,7 @@ public abstract class ReferenceCountedOpenSslContext extends SslContext implemen
     //            get access to an OpenSslSessionContext after this method was called to prevent the user from
     //            producing a segfault.
     final void destroy() {
-        synchronized (ReferenceCountedOpenSslContext.class) {
+        if (DESTROYED_UPDATER.compareAndSet(this, 0, 1)) {
             if (ctx != 0) {
                 SSLContext.free(ctx);
                 ctx = 0;
