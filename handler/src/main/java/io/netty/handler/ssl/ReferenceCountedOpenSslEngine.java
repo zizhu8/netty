@@ -151,7 +151,7 @@ public class ReferenceCountedOpenSslEngine extends SSLEngine implements Referenc
         SET_SERVER_NAMES_METHOD = setServerNamesMethod;
     }
 
-    private static final int MAX_PLAINTEXT_LENGTH = 16 * 1024; // 2^14
+    static final int MAX_PLAINTEXT_LENGTH = 16 * 1024; // 2^14
     private static final int MAX_COMPRESSED_LENGTH = MAX_PLAINTEXT_LENGTH + 1024;
     private static final int MAX_CIPHERTEXT_LENGTH = MAX_COMPRESSED_LENGTH + 1024;
 

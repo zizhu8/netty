@@ -657,7 +657,6 @@ public class SslHandler extends ByteToMessageDecoder implements ChannelOutboundH
                 }
 
                 SSLEngineResult result = wrap(alloc, engine, buf, out);
-
                 if (result.getStatus() == Status.CLOSED) {
                     // SSLEngine has been closed already.
                     // Any further write attempts should be denied.
@@ -1682,7 +1681,9 @@ public class SslHandler extends ByteToMessageDecoder implements ChannelOutboundH
      */
     private ByteBuf allocateOutNetBuf(ChannelHandlerContext ctx, int pendingBytes) {
         ByteBuf buffer = allocate(ctx, engineType.calculateOutNetBufSize(this, pendingBytes));
-        if (buffer.capacity() >= 16 * 1024 && engineType == SslEngineType.TCNATIVE) {
+        if (buffer.capacity() >= 16 * 1024 &&
+                (pendingBytes + OpenSslEngine.MAX_ENCRYPTION_OVERHEAD_LENGTH) < OpenSslEngine.MAX_PLAINTEXT_LENGTH  &&
+                engineType == SslEngineType.TCNATIVE) {
             logger.warn("allocateOutNetBuf(...) allocated 16kb buffer for {}b", pendingBytes, new Throwable());
         }
         return buffer;
