@@ -830,6 +830,10 @@ public class SslHandler extends ByteToMessageDecoder implements ChannelOutboundH
 
                 switch (result.getStatus()) {
                 case BUFFER_OVERFLOW:
+                    if (engineType == SslEngineType.TCNATIVE) {
+                        logger.warn("wrap(...) BUFFER_OVERFLOW for {} / {}",
+                                in.readableBytes(), out.writableBytes(), new Throwable());
+                    }
                     out.ensureWritable(maxPacketBufferSize);
                     break;
                 default:
@@ -1677,7 +1681,11 @@ public class SslHandler extends ByteToMessageDecoder implements ChannelOutboundH
      * the specified amount of pending bytes.
      */
     private ByteBuf allocateOutNetBuf(ChannelHandlerContext ctx, int pendingBytes) {
-        return allocate(ctx, engineType.calculateOutNetBufSize(this, pendingBytes));
+        ByteBuf buffer = allocate(ctx, engineType.calculateOutNetBufSize(this, pendingBytes));
+        if (buffer.capacity() >= 16 * 1024 && engineType == SslEngineType.TCNATIVE) {
+            logger.warn("allocateOutNetBuf(...) allocated 16kb buffer for {}b", pendingBytes, new Throwable());
+        }
+        return buffer;
     }
 
     private final class LazyChannelPromise extends DefaultPromise<Channel> {
