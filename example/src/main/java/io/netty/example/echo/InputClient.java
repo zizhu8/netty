@@ -15,7 +15,10 @@
  */
 package io.netty.example.echo;
 
+import java.util.Scanner;
+
 import io.netty.bootstrap.Bootstrap;
+import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
@@ -27,6 +30,7 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
+import org.apache.commons.lang3.StringUtils;
 
 /**
  * Sends one message when a connection is open and echoes back any received
@@ -34,7 +38,7 @@ import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
  * traffic between the echo client and server by sending the first message to
  * the server.
  */
-public final class EchoClient {
+public final class InputClient {
 
     static final boolean SSL = System.getProperty("ssl") != null;
     static final String HOST = System.getProperty("host", "127.0.0.1");
@@ -66,17 +70,30 @@ public final class EchoClient {
                          p.addLast(sslCtx.newHandler(ch.alloc(), HOST, PORT));
                      }
                      //p.addLast(new LoggingHandler(LogLevel.INFO));
-                     p.addLast(new EchoClientHandler());
+                     p.addLast(new InputClientHandler());
                  }
              });
 
             // Start the client.
             ChannelFuture f = b.connect(HOST, PORT).sync();
 
+            Channel channel = f.channel();
+
+            System.out.println("input : ");
+            Scanner scanner = new Scanner(System.in);
+            String line = null;
+            while((line = scanner.nextLine()) != null){
+                if(StringUtils.equalsIgnoreCase(line, "quit")){
+                    break;
+                }
+                channel.writeAndFlush(Utils.genMsgByteBuf(line));
+                System.out.println("input : ");
+                scanner = new Scanner(System.in);
+            }
+
             // Wait until the connection is closed.
             f.channel().closeFuture().sync();
 
-            //f.channel().writeAndFlush();
         } finally {
             // Shut down the event loop to terminate all threads.
             group.shutdownGracefully();

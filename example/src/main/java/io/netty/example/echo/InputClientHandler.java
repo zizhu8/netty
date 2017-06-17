@@ -18,6 +18,7 @@ package io.netty.example.echo;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 
@@ -26,7 +27,7 @@ import io.netty.channel.ChannelInboundHandlerAdapter;
  * traffic between the echo client and server by sending the first message to
  * the server.
  */
-public class EchoClientHandler extends ChannelInboundHandlerAdapter {
+public class InputClientHandler extends ChannelInboundHandlerAdapter {
 
     private final ByteBuf firstMessage;
 
@@ -35,18 +36,18 @@ public class EchoClientHandler extends ChannelInboundHandlerAdapter {
     /**
      * Creates a client-side handler.
      */
-    public EchoClientHandler() {
+    public InputClientHandler() {
         /*firstMessage = Unpooled.buffer(EchoClient.SIZE);
         for (int i = 0; i < firstMessage.capacity(); i ++) {
             firstMessage.writeByte((byte) i);
         }*/
         String hello = "Hello, World";
-        firstMessage = Utils.genMsgByteBuf(hello);
+        firstMessage = genMsgByteBuf(hello);
     }
 
     @Override
     public void channelActive(ChannelHandlerContext ctx) {
-        ctx.writeAndFlush(firstMessage);
+        //ctx.writeAndFlush(firstMessage);
     }
 
     @Override
@@ -55,14 +56,20 @@ public class EchoClientHandler extends ChannelInboundHandlerAdapter {
         int i = atomicInteger.getAndIncrement();
         String msgStr = "Hello, World"+i;
 
-        try {
+        /*try {
             Thread.sleep(1000);
         } catch (InterruptedException e) {
             e.printStackTrace();
-        }
+        }*/
 
-        ctx.writeAndFlush(Utils.genMsgByteBuf(msgStr));
+        //ctx.writeAndFlush(genMsgByteBuf(msgStr));
 
+    }
+
+    private ByteBuf genMsgByteBuf(String msgStr) {
+        ByteBuf msgByteBuf = Unpooled.buffer(msgStr.getBytes().length);
+        msgByteBuf.writeBytes(msgStr.getBytes());
+        return msgByteBuf;
     }
 
     @Override
